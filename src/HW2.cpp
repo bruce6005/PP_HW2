@@ -193,7 +193,7 @@ AlignmentResult striped_sw(const std::string& ref, const std::string& query,
 
         for (int i = 0; i < segLen; ++i) {
             
-            H_prev = i == 0 ? H[segLen-1] : H[i-1];
+            H_prev = i == 0 ? H[segLen-1] : H[i-1]; // 不要ROTATE 讓整個快一點
             
             batch H_prev = i == 0 ? prev_H.back() : prev_H[i - 1];
             // 1. 斜對角 (↖)：由上一個 batch 取得 H(i-1, j-1)
@@ -238,7 +238,8 @@ AlignmentResult striped_sw(const std::string& ref, const std::string& query,
                 }
             }
         }
-        // new_E
+// LAZY P 論文的 但看起來是錯的 但我沒時間了
+
         // batch vF_local = slide_left_logical(new_E, 1);  // 初始 carry，模擬 << 1
         // batch h_gap_open = H[0];
         // int j = 0;
@@ -256,7 +257,7 @@ AlignmentResult striped_sw(const std::string& ref, const std::string& query,
         // }
 
 
-        //LAZY P 看不懂 寫一個最爛的
+//LAZY P 看不懂 寫一個最爛的處理 拿出來再放回去  慢得要死
         
         std::vector<int> linear_H(queryLen, 0);  
         for (size_t i = 0; i < H.size(); ++i) {
@@ -348,6 +349,47 @@ AlignmentResult striped_sw_scalar(const std::string& ref, const std::string& que
 
     return {max_score, ref_end, query_end,DP};
 }
+AlignmentResult striped_sw_scalar_banded(const std::string& ref, const std::string& query,
+    int match = 2, int mismatch = -1, int gap = -2,
+    int band_width = 10) {
+int refLen = ref.size();
+int queryLen = query.size();
+
+    std::vector<int> prev_row(queryLen + 1, 0);
+    std::vector<int> curr_row(queryLen + 1, 0);
+
+    int max_score = 0;
+    int ref_end = -1;
+    int query_end = -1;
+    std::vector<std::vector<int>> DP(refLen + 1, std::vector<int>(queryLen + 1, 0));
+
+    for (int i = 1; i <= refLen; ++i) {
+    // 限制 j 在 band 範圍內
+    int j_min = std::max(1, i - band_width);
+    int j_max = std::min(queryLen, i + band_width);
+
+    for (int j = j_min; j <= j_max; ++j) {
+    int score_diag = prev_row[j - 1] + ((ref[i - 1] == query[j - 1]) ? match : mismatch);
+    int score_up   = prev_row[j] + gap;
+    int score_left = curr_row[j - 1] + gap;
+    int score = std::max({0, score_diag, score_up, score_left});
+    curr_row[j] = score;
+    DP[i][j] = score;
+
+    if (score > max_score) {
+    max_score = score;
+    ref_end = i - 1;
+    query_end = j - 1;
+    }
+    }
+
+    std::swap(prev_row, curr_row);
+    std::fill(curr_row.begin(), curr_row.end(), 0);  // 清空 curr_row 下一輪使用
+    }
+
+    return {max_score, ref_end, query_end, DP};
+}
+
 
 std::tuple<std::string, std::string, int, int> traceback(
     const std::string& ref, const std::string& query,
@@ -438,7 +480,7 @@ auto run_ssw(string ref, string query, bool isSIMD){
     
 
     auto start = high_resolution_clock::now();
-    auto result = isSIMD? striped_sw(ref, query) : striped_sw_scalar(ref, query);
+    auto result = isSIMD? striped_sw(ref, query) : striped_sw_scalar_banded(ref, query);
     cout<<"isSIMD "<<isSIMD<<" query_end:"<<result.query_end<<"  ref_end:"<<result.ref_end<<" "<<endl;
     // print_dp_matrix(result.DP,ref,query);
     
